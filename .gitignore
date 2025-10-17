@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+.env
+
+# builds
+.next/
+dist/
+build/
+__pycache__/
+
+# docker
+*.pid
+*.log
+*.db
+*.sqlite
+
+# misc
+.DS_Store
+*.local

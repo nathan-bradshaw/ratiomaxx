@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: ratiomaxx-api
+    env: node
+    rootDir: apps/api
+    buildCommand: npm run build
+    startCommand: npm run start
