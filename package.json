@@ -4,7 +4,7 @@
   "scripts": {
     "dev:ui": "npm --prefix apps/ui run dev",
     "dev:api": "npm --prefix apps/api run dev",
-    "docker:ml": "docker compose up --build ml-service",
+    "docker:ml": "docker compose up ml-service",
     "dev:all": "concurrently -k -n UI,API,ML -c green,cyan,yellow \"npm run dev:ui\" \"npm run dev:api\" \"npm run docker:ml\"",
     "lint": "eslint . --ext .ts,.tsx --ignore-path .gitignore",
     "format": "prettier --write ."
