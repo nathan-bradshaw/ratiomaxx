@@ -178,16 +178,27 @@ export default function Home() {
             stream fps: {streamFps} • landmarks fps: {fps}
           </p>
         </div>
-        <div className="w-full max-w-xl h-[500px] overflow-auto">
-          <pre
-            className={`text-xs p-3 rounded border min-h-full ${
-              dark
-                ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
-                : 'bg-gray-100 text-black border-gray-300'
-            }`}
-          >
-            {result || data ? JSON.stringify({ data, result }, null, 2) : 'waiting for data…'}
-          </pre>
+        <div className="flex-1 h-[500px] overflow-auto">
+          <div className="flex gap-2 w-full">
+            <pre
+              className={`flex-1 text-xs p-3 rounded border min-h-full ${
+                dark
+                  ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
+                  : 'bg-gray-100 text-black border-gray-300'
+              }`}
+            >
+              {result ? JSON.stringify(result, null, 2) : 'waiting for result…'}
+            </pre>
+            <pre
+              className={`flex-1 text-xs p-3 rounded border min-h-full ${
+                dark
+                  ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
+                  : 'bg-gray-100 text-black border-gray-300'
+              }`}
+            >
+              {data ? JSON.stringify(data, null, 2) : 'waiting for data…'}
+            </pre>
+          </div>
         </div>
       </div>
       <button

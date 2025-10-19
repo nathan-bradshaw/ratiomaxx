@@ -96,9 +96,31 @@ async def ws_stream(ws: WebSocket):
       arr = np.frombuffer(msg['bytes'], np.uint8)
       img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
       h, w = img.shape[:2]
-      gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-      gray = cv2.equalizeHist(gray)
-      frame = img  # trackers want BGR images
+      # normalize luminance each frame by estimating average brightness
+      # apply gamma curve to balance washed-out bright scenes and crushed dark ones
+      # ensures the detector sees consistent mid-tones across lighting conditions
+      ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+      Y, Cr, Cb = cv2.split(ycrcb)
+      meanY = float(np.mean(Y))
+      target = 140.0
+      gamma = float(np.clip(
+        np.log(max(1e-6, target / 255.0)) / np.log(max(1e-6, meanY / 255.0)),
+        0.6, 1.6
+      ))
+      img_gamma = np.clip((img.astype(np.float32) / 255.0) ** gamma * 255.0, 0, 255).astype(np.uint8)
+
+      # convert to YCrCb and apply CLAHE on Y (luma) only to boost local contrast
+      # enhances edges like eyes, nose, jawline without amplifying noise
+      # makes facial features pop for the cascade detector
+      ycrcb2 = cv2.cvtColor(img_gamma, cv2.COLOR_BGR2YCrCb)
+      Y2, Cr2, Cb2 = cv2.split(ycrcb2)
+      clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+      Y2c = clahe.apply(Y2)
+      det_img = cv2.cvtColor(cv2.merge([Y2c, Cr2, Cb2]), cv2.COLOR_YCrCb2BGR)
+
+      gray = cv2.cvtColor(det_img, cv2.COLOR_BGR2GRAY)
+      frame = img  # trackers want original BGR images
+
       # helpers for skin metrics
       def ema(prev, x, alpha=0.2):
         return x if prev is None else (alpha * x + (1 - alpha) * prev)
@@ -117,10 +139,21 @@ async def ws_stream(ws: WebSocket):
       if run_detector:
         faces_np = face_cascade.detectMultiScale(
           gray,
-          scaleFactor=1.08,
-          minNeighbors=6,
-          minSize=(64, 64)
+          scaleFactor=1.05,
+          minNeighbors=5,
+          flags=cv2.CASCADE_SCALE_IMAGE,
+          minSize=(max(48, w // 12), max(48, h // 12))
         )
+        if len(faces_np) == 0:
+          # fallback: lightly denoise and relax thresholds
+          blur = cv2.bilateralFilter(gray, 5, 50, 50)
+          faces_np = face_cascade.detectMultiScale(
+            blur,
+            scaleFactor=1.03,
+            minNeighbors=3,
+            flags=cv2.CASCADE_SCALE_IMAGE,
+            minSize=(max(40, w // 16), max(40, h // 16))
+          )
         # rebuild trackers from fresh detections
         trackers = []
         for (x, y, wi, hi) in faces_np:
