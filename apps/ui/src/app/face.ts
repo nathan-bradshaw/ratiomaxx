@@ -24,17 +24,34 @@ export const drawLandmarks = (
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
   mode: 'outline' | 'mesh' = 'outline',
-  onLandmarks?: (lm: { x: number; y: number }[]) => void
+  onLandmarks?: (
+    lm: { x: number; y: number; z?: number }[],
+    meta?: {
+      w: number
+      h: number
+    }
+  ) => void
 ) => {
   const ctx = canvas.getContext('2d')!
   const utils = new DrawingUtils(ctx)
 
   const step = async () => {
+    if (!video.videoWidth || !video.videoHeight || video.readyState < 2) {
+      requestAnimationFrame(step)
+      return
+    }
     if (!landmarker) return
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
 
-    const res = landmarker.detectForVideo(video, performance.now())
+    let res: any
+    try {
+      res = landmarker.detectForVideo(video, performance.now())
+    } catch {
+      requestAnimationFrame(step)
+      return
+    }
+
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
     if (res.faceLandmarks?.length) {
@@ -44,75 +61,38 @@ export const drawLandmarks = (
         const now = performance.now()
         ;(drawLandmarks as any)._last = (drawLandmarks as any)._last ?? 0
         if (now - (drawLandmarks as any)._last > 250) {
-          onLandmarks(lm.map((p) => ({ x: p.x, y: p.y })))
+          const w = canvas.width
+          const h = canvas.height
+
+          onLandmarks(
+            lm.map((p) =>
+              'z' in (p as any) ? { x: p.x, y: p.y, z: (p as any).z } : { x: p.x, y: p.y }
+            ),
+            { w, h }
+          )
           ;(drawLandmarks as any)._last = now
         }
       }
 
-      // draw key feature outlines (slightly more noticeable)
-      const subtle = { color: 'rgba(255,255,255,0.26)', lineWidth: 0.9 }
-      const subtleEye = { color: 'rgba(255,255,255,0.30)', lineWidth: 1.0 }
-
-      utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_FACE_OVAL, subtle)
-      utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LIPS, subtle)
-      utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_EYE, subtleEye)
-      utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE, subtleEye)
-      utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW, subtle)
-      utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW, subtle)
-      utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_NOSE, subtle)
-
-      // optional full mesh overlay (make it extra subtle)
+      // optional mesh overlay (kept subtle, draws under the outline)
       if (mode === 'mesh') {
+        ctx.save()
+        ctx.setLineDash([])
         utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_TESSELATION, {
-          color: 'rgba(255,255,255,0.12)',
-          lineWidth: 0.4
+          color: 'rgba(0,255,200,0.25)',
+          lineWidth: 0.5
         })
+        ctx.restore()
       }
 
-      // simple ratio examples
-      const w = canvas.width
-      const h = canvas.height
-      const p = (i: number) => ({ x: lm[i].x * w, y: lm[i].y * h })
-      const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
-        Math.hypot(a.x - b.x, a.y - b.y)
-
-      // interpupillary distance vs face width
-      const leftEye = p(468) // iris center approx (requires iris subset in model v1; fallback nearby points)
-      const rightEye = p(473)
-      const eyeDist = dist(leftEye, rightEye)
-
-      // face width: distance between left/right cheek landmarks (rough)
-      const leftCheek = p(234)
-      const rightCheek = p(454)
-      const faceWidth = dist(leftCheek, rightCheek)
-
-      // depth cue: emphasize jawline & cheekbones with brighter depth dots
+      // light face outline (keeps it subtle)
       ctx.save()
-      for (let i = 0; i < lm.length; i++) {
-        const pt = lm[i]
-        const xy = p(i)
-        const z = pt.z ?? 0
-        const near = Math.max(0, Math.min(1, -z * 2))
-        const isJawOrCheek = (i >= 200 && i <= 234) || i === 234 || i === 454
-        const baseAlpha = isJawOrCheek ? 0.18 : 0.08
-        const baseRadius = isJawOrCheek ? 1.6 : 1.0
-        const r = baseRadius + near * 1.8
-        ctx.globalAlpha = baseAlpha + near * 0.18
-        ctx.beginPath()
-        ctx.arc(xy.x, xy.y, r, 0, Math.PI * 2)
-        ctx.fillStyle = isJawOrCheek ? '#00e6c0' : '#f0f0f0'
-        ctx.fill()
-      }
+      ctx.setLineDash([3, 3])
+      utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_FACE_OVAL, {
+        color: 'rgba(255,255,255,0.35)',
+        lineWidth: 1
+      })
       ctx.restore()
-
-      const ratioEyeToFace = +(eyeDist / faceWidth).toFixed(3)
-
-      ctx.fillStyle = 'rgba(0,0,0,0.6)'
-      ctx.fillRect(8, 8, 180, 50)
-      ctx.fillStyle = '#00ff88'
-      ctx.font = '12px monospace'
-      ctx.fillText(`eye/face: ${ratioEyeToFace}`, 14, 26)
-      ctx.fillText(`landmarks: ${lm.length}`, 14, 44)
     }
 
     requestAnimationFrame(step)
