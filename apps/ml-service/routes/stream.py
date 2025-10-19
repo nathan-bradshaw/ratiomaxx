@@ -26,6 +26,8 @@ def _upd_skin(ws, key, val, a=0.2, scale=8.0):
 @router.websocket('/ws/stream')
 async def ws_stream(ws: WebSocket):
   await ws.accept()
+  ws.eye_poly = None
+  ws.teeth_poly = None
   # per-socket EMA state for skin metrics
   if not hasattr(ws, 'skin_ema'):
     ws.skin_ema = {}
@@ -36,8 +38,20 @@ async def ws_stream(ws: WebSocket):
   try:
     while True:
       msg = await ws.receive()
+      # handle JSON control messages (eye/teeth polygons) sent before frames
+      if msg.get('text') is not None:
+        try:
+          j = json.loads(msg['text'])
+          if isinstance(j, dict):
+            if 'eyePoly' in j:
+              ws.eye_poly = j['eyePoly']
+            if 'teethPoly' in j:
+              ws.teeth_poly = j['teethPoly']
+        except Exception:
+          pass
+        continue
+
       if msg.get('bytes') is None:
-        await ws.send_text(json.dumps({'error': 'expected binary frame data'}))
         continue
 
       t0 = time.time()
@@ -57,27 +71,93 @@ async def ws_stream(ws: WebSocket):
       if faces:
         fx, fy, fw, fh = faces[0]['x'], faces[0]['y'], faces[0]['w'], faces[0]['h']
         roi = img[max(0,fy):fy+fh, max(0,fx):fx+fw]
+
+        # map normalized frame polys into ROI pixel coords if available
+        state['eye_poly'] = None
+        state['teeth_poly'] = None
+        if ws.eye_poly and fw > 0 and fh > 0:
+          def map_poly(poly):
+            out = []
+            for p in poly:
+              try:
+                px = int(p.get('x', 0.0) * w) - fx
+                py = int(p.get('y', 0.0) * h) - fy
+                # clamp to ROI bounds
+                px = max(0, min(px, fw - 1))
+                py = max(0, min(py, fh - 1))
+                out.append({'x': px, 'y': py})
+              except Exception:
+                continue
+            return out
+          state['eye_poly'] = {
+            'left':  map_poly(ws.eye_poly.get('left', [])) if isinstance(ws.eye_poly, dict) else None,
+            'right': map_poly(ws.eye_poly.get('right', [])) if isinstance(ws.eye_poly, dict) else None
+          }
+        if ws.teeth_poly and fw > 0 and fh > 0:
+          def map_poly_list(poly):
+            out = []
+            for p in poly:
+              try:
+                px = int(p.get('x', 0.0) * w) - fx
+                py = int(p.get('y', 0.0) * h) - fy
+                px = max(0, min(px, fw - 1))
+                py = max(0, min(py, fh - 1))
+                out.append({'x': px, 'y': py})
+              except Exception:
+                continue
+            return out
+          state['teeth_poly'] = map_poly_list(ws.teeth_poly) if isinstance(ws.teeth_poly, list) else None
+
         skin_payload, state = skin.compute(roi, state)
     
-      if skin_payload is not None:
-        for k, v in skin_payload.items():
-            now_val = float(v['now'])
+      if isinstance(skin_payload, dict) and isinstance(skin_payload.get('metrics'), dict):
+        metrics = skin_payload['metrics']
+        for k, v in metrics.items():
+          if isinstance(v, dict) and 'now' in v:
+            try:
+              now_val = float(v['now'])
+            except Exception:
+              continue
             # tune alpha/scale per metric if you want
             alpha = 0.2 if k != 'evenness' else 0.1
             scale = 8.0
             avg, conf = _upd_skin(ws, k, now_val, a=alpha, scale=scale)
             v['avg'] = round(avg, 1)
             v['conf'] = round(conf, 1)
+        skin_payload['metrics'] = metrics
+      else:
+        skin_payload = None
 
-      payload = {
-        'ts': time.time(),
-        'shape': { 'w': w, 'h': h },
-        'faces': faces,
-        'facesCount': len(faces),
-        'proc_ms': proc_time_ms(t0)
-      }
+      proc = proc_time_ms(t0)
+      fps = round(1000.0 / max(1.0, proc), 1)
+
+      # normalize faces into { bbox: {x,y,w,h}, conf? }
+      faces_norm = []
+      for b in faces:
+        item = { 'bbox': { 'x': b['x'], 'y': b['y'], 'w': b['w'], 'h': b['h'] } }
+        if 'conf' in b:
+          try:
+            item['conf'] = round(float(b['conf']), 1)
+          except Exception:
+            item['conf'] = b['conf']
+        faces_norm.append(item)
+
+      payload = {}
       if skin_payload is not None:
         payload['skin'] = skin_payload
+      payload.update({
+        'summary': {
+          'ts': time.time(),
+          'proc_ms': proc,
+          'fps': fps
+        },
+        'video': { 'w': w, 'h': h },
+        'faces': {
+          'count': len(faces_norm),
+          'items': faces_norm
+        }
+      })
+
       await ws.send_text(json.dumps(payload))
       frame_idx += 1
   except WebSocketDisconnect:

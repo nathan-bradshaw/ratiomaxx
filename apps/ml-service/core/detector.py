@@ -68,5 +68,5 @@ class FaceDetector:
     bw = max(1, min(b['w'], w - x))
     bh = max(1, min(b['h'], h - y))
     out = {'x': int(x), 'y': int(y), 'w': int(bw), 'h': int(bh)}
-    if 'conf' in b: out['conf'] = float(b['conf'])
+    if 'conf' in b: out['conf'] = round(float(b['conf']), 1)
     return out

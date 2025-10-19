@@ -1,7 +1,7 @@
 export const startStream = async (
   onResult: (d: any) => void,
   videoEl?: HTMLVideoElement,
-  options?: { url?: string; targetFps?: number; jpegQuality?: number; onFrameSent?: () => void }
+  options?: { url?: string; targetFps?: number; jpegQuality?: number; onFrameSent?: () => void; getPolys?: () => any | null }
 ) => {
   const url = options?.url ?? (process.env.NEXT_PUBLIC_ML_WS_URL || 'ws://localhost:8000/ws/stream')
   const ws = new WebSocket(url)
@@ -69,6 +69,9 @@ export const startStream = async (
 
       toArrayBuffer(canvas, q).then((buf) => {
         if (!buf || ws.readyState !== WebSocket.OPEN) return
+
+        const polys = options?.getPolys?.()
+        if (polys) ws.send(JSON.stringify(polys))
 
         ws.send(buf)
         options?.onFrameSent?.()

@@ -2,14 +2,14 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { startStream } from './stream'
-import { loadLandmarker, drawLandmarks } from './face'
+import { loadLandmarker, drawLandmarks, buildPolys } from './face'
 
 export const ping = async () => fetch('http://localhost:4000/ping').then((r) => r.json())
 
 export default function Home() {
   const [pingResult, setPingResult] = useState<string | null>(null)
-  const [result, setResult] = useState<any>(null)
-  const [data, setData] = useState<any>(null)
+  const [skinMetrics, setSkinMetrics] = useState<any>(null)
+  const [facialRatios, setFacialRatios] = useState<any>(null)
 
   // pick avg or now
   const pick = (m?: { now?: number; avg?: number }) => m?.avg ?? m?.now
@@ -23,6 +23,7 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const lastLmRef = useRef<any[] | null>(null)
+  const polysRef = useRef<any | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const analyzeWsRef = useRef<WebSocket | null>(null)
 
@@ -36,7 +37,7 @@ export default function Home() {
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data)
-        if (msg) setData(msg) //.data
+        if (msg) setFacialRatios(msg) //.data
       } catch {}
     }
     ws.onclose = () => {
@@ -51,6 +52,7 @@ export default function Home() {
 
   const onLm = (lm: any[]) => {
     lastLmRef.current = lm
+    polysRef.current = buildPolys(lm)
     const now = performance.now()
     const { t, count } = lastRef.current
     if (now - t > 1000) {
@@ -70,7 +72,7 @@ export default function Home() {
   const onStart = async () => {
     if (running) return
     await loadLandmarker()
-    const { stop, ws } = await startStream(setResult, videoRef.current ?? undefined, {
+    const { stop, ws } = await startStream(setSkinMetrics, videoRef.current ?? undefined, {
       url: process.env.NEXT_PUBLIC_ML_WS_URL || 'ws://localhost:8000/ws/stream',
       onFrameSent: () => {
         const now = performance.now()
@@ -81,14 +83,15 @@ export default function Home() {
         } else {
           streamRef.current.count = count + 1
         }
-      }
+      },
+      getPolys: () => polysRef.current
     })
     wsRef.current = ws
     openAnalyzeWs()
     ;(window as any).stopStream = stop
     setRunning(true)
     if (videoRef.current && overlayRef.current)
-      drawLandmarks(videoRef.current, overlayRef.current, overlayMode, onLm)
+      drawLandmarks(videoRef.current, overlayRef.current, overlayMode, onLm, true)
   }
 
   const onStop = () => {
@@ -131,45 +134,44 @@ export default function Home() {
             playsInline
           />
           <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
-          {result?.skin && (
+          {skinMetrics?.skin && (
             <div className="absolute left-2 top-2 bg-black/70 text-white text-xs rounded px-2 py-1 shadow space-y-0.5">
-              <div>skin clarity {pick(result.skin.clarity)?.toFixed(1)}</div>
-              <div>redness {pick(result.skin.redness)?.toFixed(1)}</div>
-              <div>evenness {pick(result.skin.evenness)?.toFixed(1)}</div>
-              <div>shine {pick(result.skin.shine)?.toFixed(1)}</div>
-              <div>dark circles {pick(result.skin.dark_circles)?.toFixed(1)}</div>
-              <div>blemishes {pick(result.skin.blemishes)?.toFixed(1)}</div>
-              {result.signals?.teeth_whiteness && (
-                <div>
-                  teeth {pick(result.signals.teeth_whiteness)?.toFixed(1)}
-                  {typeof result.signals.teeth_whiteness.conf === 'number'
-                    ? ` (${Math.round(result.signals.teeth_whiteness.conf)}%)`
-                    : ''}
-                </div>
-              )}
-              {result.signals?.sclera_health && (
-                <div>
-                  eye sclera {pick(result.signals.sclera_health)?.toFixed(1)}
-                  {typeof result.signals.sclera_health.conf === 'number'
-                    ? ` (${Math.round(result.signals.sclera_health.conf)}%)`
-                    : ''}
-                </div>
-              )}
+              {(() => {
+                const m = skinMetrics?.skin?.metrics
+                if (!m) return null
+                return (
+                  <>
+                    {typeof skinMetrics?.skin?.summary?.quality_score_pct === 'number' && (
+                      <div>quality {skinMetrics.skin.summary.quality_score_pct.toFixed(1)}%</div>
+                    )}
+                    <div>skin clarity {pick(m.clarity)?.toFixed(1)}</div>
+                    <div>redness {pick(m.redness)?.toFixed(1)}</div>
+                    <div>evenness {pick(m.evenness)?.toFixed(1)}</div>
+                    <div>shine {pick(m.shine)?.toFixed(1)}</div>
+                    <div>dark circles {pick(m.dark_circles)?.toFixed(1)}</div>
+                    <div>blemishes {pick(m.blemishes)?.toFixed(1)}</div>
+                    {m.teeth_whiteness && <div>teeth {pick(m.teeth_whiteness)?.toFixed(1)}</div>}
+                    {m.eye_whiteness && <div>eyes {pick(m.eye_whiteness)?.toFixed(1)}</div>}
+                  </>
+                )
+              })()}
             </div>
           )}
-          {data && (
+          {facialRatios && (
             <div className="absolute top-2 right-2 bg-black/70 text-yellow-300 text-xs rounded px-2 py-1 shadow">
               <div className="font-semibold">
                 φ{' '}
-                {typeof data.golden.score_pct === 'number' ? data.golden.score_pct.toFixed(1) : '-'}
+                {typeof facialRatios?.summary?.golden_score_pct === 'number'
+                  ? facialRatios.summary.golden_score_pct.toFixed(1)
+                  : '-'}
                 %
               </div>
-              {data.ratios && (
+              {facialRatios?.ratios && (
                 <div className="mt-1 text-[10px] text-white/90">
-                  <div>face {data.golden.ratios.face_phi}</div>
-                  <div>eyes {data.golden.ratios.eyes_phi}</div>
-                  <div>mouth/nose {data.golden.ratios.mouth_nose_phi}</div>
-                  <div>lip fullness {data.golden.ratios.lip_fullness_phi}</div>
+                  <div>face {facialRatios.ratios.face_length_to_width}</div>
+                  <div>eyes {facialRatios.ratios.ipd_to_eye_width}</div>
+                  <div>mouth/nose {facialRatios.ratios.mouth_to_nose_width}</div>
+                  <div>lip fullness {facialRatios.ratios.lower_to_upper_lip_height}</div>
                 </div>
               )}
             </div>
@@ -187,7 +189,7 @@ export default function Home() {
                   : 'bg-gray-100 text-black border-gray-300'
               }`}
             >
-              {result ? JSON.stringify(result, null, 2) : 'waiting for result…'}
+              {skinMetrics ? JSON.stringify(skinMetrics, null, 2) : 'waiting for metrics…'}
             </pre>
             <pre
               className={`flex-1 text-xs p-3 rounded border min-h-full ${
@@ -196,7 +198,7 @@ export default function Home() {
                   : 'bg-gray-100 text-black border-gray-300'
               }`}
             >
-              {data ? JSON.stringify(data, null, 2) : 'waiting for data…'}
+              {facialRatios ? JSON.stringify(facialRatios, null, 2) : 'waiting for ratios…'}
             </pre>
           </div>
         </div>

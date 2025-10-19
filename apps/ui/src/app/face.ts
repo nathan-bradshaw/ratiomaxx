@@ -30,7 +30,8 @@ export const drawLandmarks = (
       w: number
       h: number
     }
-  ) => void
+  ) => void,
+  debugPolys?: boolean
 ) => {
   const ctx = canvas.getContext('2d')!
   const utils = new DrawingUtils(ctx)
@@ -57,6 +58,13 @@ export const drawLandmarks = (
     if (res.faceLandmarks?.length) {
       const lm = res.faceLandmarks[0]
 
+      if (debugPolys) {
+        const { eyePoly, teethPoly } = buildEyeTeethPolys(lm)
+        drawPoly(ctx, eyePoly.left, 'rgba(0,0,0,0.5)', { width: 1, dash: [3, 3] })
+        drawPoly(ctx, eyePoly.right, 'rgba(0,0,0,0.5)', { width: 1, dash: [3, 3] })
+        drawPoly(ctx, teethPoly, 'rgba(0,0,0,0.5)', { width: 1, dash: [3, 3] })
+      }
+
       if (onLandmarks) {
         const now = performance.now()
         ;(drawLandmarks as any)._last = (drawLandmarks as any)._last ?? 0
@@ -74,22 +82,13 @@ export const drawLandmarks = (
         }
       }
 
-      // optional mesh overlay (kept subtle, draws under the outline)
-      if (mode === 'mesh') {
-        ctx.save()
-        ctx.setLineDash([])
-        utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_TESSELATION, {
-          color: 'rgba(0,255,200,0.25)',
-          lineWidth: 0.5
-        })
-        ctx.restore()
-      }
-
-      // light face outline (keeps it subtle)
+      // light face outline with sharper joins so jaw corners read better
       ctx.save()
       ctx.setLineDash([3, 3])
+      ctx.lineJoin = 'miter'
+      ctx.miterLimit = 2
       utils.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_FACE_OVAL, {
-        color: 'rgba(255,255,255,0.35)',
+        color: 'rgba(255,255,255,0.3)',
         lineWidth: 1
       })
       ctx.restore()
@@ -99,4 +98,47 @@ export const drawLandmarks = (
   }
 
   requestAnimationFrame(step)
+}
+
+function drawPoly(
+  ctx: CanvasRenderingContext2D,
+  points: { x: number; y: number }[],
+  color: string,
+  opts?: { width?: number; dash?: number[] }
+) {
+  ctx.save()
+  ctx.strokeStyle = color
+  ctx.lineWidth = opts?.width ?? 1
+  ctx.setLineDash(opts?.dash ?? [4, 4])
+  ctx.lineJoin = 'miter'
+  ctx.miterLimit = 2
+  ctx.beginPath()
+  if (points.length > 0) {
+    ctx.moveTo(points[0].x * ctx.canvas.width, points[0].y * ctx.canvas.height)
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x * ctx.canvas.width, points[i].y * ctx.canvas.height)
+    }
+    ctx.closePath()
+  }
+  ctx.stroke()
+  ctx.restore()
+}
+
+function buildEyeTeethPolys(lms: { x: number; y: number }[]) {
+  const pick = (idxs: number[]) => idxs.map((i) => ({ x: lms[i].x, y: lms[i].y }))
+  const eyePoly = { left: pick(eyeIdxL), right: pick(eyeIdxR) }
+  const teethPoly = pick(innerLipIdx)
+  return { eyePoly, teethPoly }
+}
+
+// full eye rings (upper + lower) and inner lip ring
+const eyeIdxL = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+const eyeIdxR = [263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466]
+const innerLipIdx = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308]
+
+export const buildPolys = (lms: { x: number; y: number }[]) => {
+  const pick = (idxs: number[]) => idxs.map((i) => ({ x: lms[i].x, y: lms[i].y }))
+  const eyePoly = { left: pick(eyeIdxL), right: pick(eyeIdxR) }
+  const teethPoly = pick(innerLipIdx)
+  return { eyePoly, teethPoly }
 }
