@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'
+export const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
